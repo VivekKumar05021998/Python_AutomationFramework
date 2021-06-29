@@ -20,9 +20,7 @@ List=[]
 RetryNumber=0
 SystemError="Nothing"
 todayDate=datetime.date.today()
-chrome_options = webdriver.ChromeOptions()
-chrome_options.add_argument("--incognito")
-driver = webdriver.Chrome(executable_path="C:\chromedriver.exe", chrome_options=chrome_options)
+
 
 logging.basicConfig(filename="Logs/Log--"+str(todayDate)+".log",
                     format='%(asctime)s: %(levelname)s: %(message)s',
@@ -41,8 +39,9 @@ class BusinessRuleException(Exception):
 
 logger.info("******************Process Started***********************")
 
-def init(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError):
+def init(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,driver):
     try:
+        SystemError="Nothing"
         if not bool(Config):
             Config=InitAllSettings(Config)
             logger.info("Reading Data from Config Successful.")
@@ -55,7 +54,7 @@ def init(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError):
                 url = sheet.cell(row=r, column=3).value
                 List.append([name,url])
             print(List)
-        InitAllApplication(Config)
+        driver=InitAllApplication(Config)
     except BusinessRuleException as error:
         SystemError=error.value
         print(SystemError)
@@ -63,13 +62,13 @@ def init(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError):
         SystemError="Error"
     if SystemError is "Nothing":
         print("GetTransactionData")
-        Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError=GetTransactionData(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError)
+        Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,driver=GetTransactionData(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,driver)
     else:
         logger.info("System Error at Initialization: "+SystemError)
         print("EndProcess")
-        #EndProcess()
+        EndProcess(Config,driver)
 
-def GetTransactionData(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError):
+def GetTransactionData(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,driver):
     if(TransactionNumber<len(List)):
         TransactionItem=List[TransactionNumber]
         print(TransactionItem)
@@ -77,37 +76,43 @@ def GetTransactionData(Config,TransactionNumber,TransactionItem,List,RetryNumber
         TransactionItem=[]
     if TransactionItem ==[]:
         logger.info("Process finished due to no more transaction data.")
-        EndProcess(Config)
+        EndProcess(Config,driver)
     else:
         logger.info("Processing Transaction Number: "+str(TransactionNumber))
-        Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError=ProcessTransaction(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError)
-    return Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError
+        Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,driver=ProcessTransaction(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,driver)
+    return Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,driver
 
-def ProcessTransaction(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError):
+def ProcessTransaction(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,driver):
     try:
         SystemError="Nothing"
         print("Inside Process Transaction.")
-        Process(Config,TransactionItem)
+        Process(Config,TransactionItem,driver)
     except BusinessRuleException as error:
         SystemError=error.value
+        print("Inside BusinessRuleException")
+        print(SystemError)
     except Exception as error:
         SystemError="Error"
+        print("Inside Exception.")
     finally:
         try:
             TransactionNumber,RetryNumber=SetTransactionStatus(TransactionNumber,RetryNumber,SystemError)
         except:
             logger.info("Set Transaction Status Failed.")
     if SystemError=="Nothing":
-        GetTransactionData(Config, TransactionNumber, TransactionItem, List, RetryNumber, SystemError)
+        print("Gotig to Get transaction data.")
+        GetTransactionData(Config, TransactionNumber, TransactionItem, List, RetryNumber, SystemError,driver)
     elif SystemError=="Error":
-        GetTransactionData(Config, TransactionNumber, TransactionItem, List, RetryNumber, SystemError)
+        print("Gotig to Init data.")
+        init(Config, TransactionNumber, TransactionItem, List, RetryNumber, SystemError, driver)
     else:
-        init(Config, TransactionNumber, TransactionItem, List, RetryNumber, SystemError)
-    return Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError
+        print("Going into Get Transaction State.")
+        GetTransactionData(Config, TransactionNumber, TransactionItem, List, RetryNumber, SystemError, driver)
+    return Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,driver
 
-def EndProcess(Config):
+def EndProcess(Config,driver):
     try:
-        CloseAllApplication(Config)
+        CloseAllApplication(Config,driver)
     except:
         logger.warn("Unable to Close the process Normally.")
         KillAllProcess()
@@ -139,11 +144,14 @@ def KillAllProcess():
 def InitAllApplication(Config):
     logger.debug("Starting All Application")
     logger.debug("Logging into Screener.")
-    isLoggedIn=ScreenerLogin(Config)
+    isLoggedIn,driver=ScreenerLogin(Config)
     if isLoggedIn=="Successful":
         logger.info("Login Successful")
+        return driver
     else:
         raise BusinessRuleException("Unable to Login")
+        return 0
+
 
 def GetAppCredential(Config):
     password=keyring.get_password(Config["ScreenerCredentialName"],Config["Username"])
@@ -167,25 +175,36 @@ def SetTransactionStatus(TransactionNumber, RetryNumber,SystemError):
         RetryNumber = 0
     return TransactionNumber,RetryNumber
 
-def CloseAllApplication(Config):
+def CloseAllApplication(Config,driver):
     logger.debug("Closing the Application")
-    ScreenerLogout(Config)
+    ScreenerLogout(Config,driver)
 
 
 
-def Process(Config,TransactionItem):
+def Process(Config,TransactionItem,driver):
     print("Inside Process.")
     print(TransactionItem)
+    if TransactionItem[1]=="NOVIGO":
+        raise BusinessRuleException("Novigo Solutions.")
     driver.find_element_by_xpath("//*[@aria-label='Search Company'][@type='search']").clear()
     driver.find_element_by_xpath("//*[@aria-label='Search Company'][@type='search']").send_keys(TransactionItem[1])
     time.sleep(5)
     print("Leaving Process")
 def ScreenerLogin(Config):
-    retryNumber = int(Config["MaxRetryNumber"])
-    for attempt in range(retryNumber):
+    print("Before retry Number")
+    retryNumber = int(Config["MaxRetryNumber"]+1)
+    print(retryNumber)
+    print("After Retry Numberr")
+    for ik in range(retryNumber):
+        print("After For loop")
         try:
+            print("Before KillAllProcess")
             KillAllProcess()
+            print("After Kill All APrdm")
             time.sleep(8)
+            chrome_options = webdriver.ChromeOptions()
+            chrome_options.add_argument("--incognito")
+            driver = webdriver.Chrome(executable_path="C:\chromedriver.exe", chrome_options=chrome_options)
             driver.get("https://www.screener.in/")
             driver.maximize_window()
             driver.implicitly_wait(10)
@@ -198,18 +217,19 @@ def ScreenerLogin(Config):
             logout = driver.find_element_by_xpath("//*[@aria-label='Logout'][@type='submit']").is_displayed()
             if not logout:
                 raise Exception
+                print("Throwing Error.")
         except:
-            print("Inside Except", attempt)
+            print("Inside Except"+str(ik))
         else:
             break
+    if (logout):
+        print("SuccessFul")
+        return "Successful",driver
     else:
-         if (logout):
-             return "Successful"
-         else:
-             return "Failed."
-def ScreenerLogout(Config):
+        return "Failed."
+def ScreenerLogout(Config,driver):
     driver.find_element_by_xpath("//*[@aria-label='Logout'][@type='submit']").click()
     driver.close()
 
 
-init(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError)
+init(Config,TransactionNumber,TransactionItem,List,RetryNumber,SystemError,"driver")
